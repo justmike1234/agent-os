@@ -1,0 +1,6 @@
+{
+  "name": "Agentic Kanban OS",
+  "description": "Real-time Kanban dashboard and activity log monitor for autonomous agentic systems and Hermes fleets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
