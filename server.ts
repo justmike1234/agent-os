@@ -145,12 +145,34 @@ app.get("/api/tasks", async (req, res) => {
   res.json({ tasks, timestamp: getTimestamp() });
 });
 
-// GET /api/logs — live ledger audit trail (fallback: sovereign activity)
+// GET /api/logs — merged execution feed (thoughts / tool calls / errors / audit)
 app.get("/api/logs", async (req, res) => {
   let logs: AgentLog[] = [];
-  const ledger = await fleetJSON<any>("/api/sovereign/hr-ledger");
-  const audit = ledger?.recent_audit || ledger?.data?.recent_audit || [];
-  if (audit.length) {
+  const feed = await fleetJSON<any>("/api/sovereign/exec-feed?limit=150");
+  const entries = feed?.entries || [];
+  if (entries.length) {
+    logs = entries.map((e: any, i: number): AgentLog => {
+      const level: AgentLog['level'] =
+        (e.level === 'THOUGHT' || e.level === 'TOOL_CALL' || e.level === 'ERROR' ||
+         e.level === 'WARN' || e.level === 'SUCCESS') ? e.level : 'INFO';
+      const ts = String(e.ts || '');
+      const timestamp = ts.includes('T') ? ts.substring(11, 19) : ts.substring(11, 19) || getTimestamp();
+      return {
+        id: e.id || `log-${i}`,
+        agentId: e.agent || 'fleet',
+        agentName: e.agent || 'Fleet',
+        timestamp,
+        level,
+        message: e.error ? `${e.message} — ${e.error}` : e.message,
+        thoughtContent: level === 'THOUGHT' ? `<thought>\n${e.message}\n</thought>` : undefined,
+        toolCall: level === 'TOOL_CALL' ? { tool: 'workflow', input: e.message } : undefined,
+        metadata: undefined,
+      };
+    });
+  } else {
+    // fallback: ledger audit only
+    const ledger = await fleetJSON<any>("/api/sovereign/hr-ledger");
+    const audit = ledger?.recent_audit || ledger?.data?.recent_audit || [];
     logs = audit.map((a: any, i: number): AgentLog => {
       let payload: any = {};
       try { payload = JSON.parse(a.payload_json || "{}"); } catch { /* keep empty */ }
@@ -165,20 +187,8 @@ app.get("/api/logs", async (req, res) => {
         timestamp: String(a.created_at || '').substring(11, 19),
         level,
         message: `${a.event_type || 'event'} · task #${payload.task_id ?? '?'} · ${payload.status || ''}`.trim(),
-        metadata: payload.tier ? { model: String(payload.tier) } : undefined,
       };
     });
-  } else {
-    const d = await fleetJSON<any>("/api/sovereign/activity");
-    const acts = d?.activities || d?.data?.activities || [];
-    logs = acts.slice(0, 120).map((act: any, i: number) => ({
-      id: `log-live-${i}-${act.id ?? i}`,
-      agentId: act.agent_id || act.agent || 'fleet',
-      agentName: act.agent_name || act.agent_id || act.agent || 'Fleet',
-      timestamp: String(act.ts || '').substring(11, 19) || getTimestamp(),
-      level: act.status === 'failed' ? 'ERROR' : act.status === 'completed' ? 'SUCCESS' : 'INFO',
-      message: `${act.event_type || act.type || 'event'} · ${act.experiment_id || act.title || act.id || ''}`.trim(),
-    }));
   }
   res.json({ logs, count: logs.length });
 });
